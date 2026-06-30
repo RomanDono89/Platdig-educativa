@@ -1,0 +1,156 @@
+#!/bin/sh
+export LANG=es_AR.iso88591
+alias curl="curl -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 --fail'"
+alias wget="wget --header='User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'"
+
+login(){
+read -p "enter your user: " user
+read -s -p "enter your password: " pass
+pass=$(echo -n "$pass" | md5sum - | cut -d " " -f1)
+#if there is an error
+if ! out=$(curl -v -i https://platdig.unlu.edu.ar/acceso.cgi -d "wAccion=login&wIdUsuario=$user&wClaveUsuario=$pass&permanecer_logueado=on" 2>/dev/null); then
+    echo "Failed to download log-in page"
+    return 1
+fi
+SID=$(echo "$out" | grep "SID" | cut -d= -f2 | cut -d";" -f1)
+IdSession=$(echo "$out" | grep "IdSession" | cut -d= -f2 | cut -d";" -f1)
+#echo "sid=$SID IdSession=$IdSession"
+if [ -z "$SID" ] || [ -z "$IdSession" ]; then
+    echo "Failed to parse cookies, was the password right?"
+    return 2
+fi
+}
+
+#returns 0 if the string contains only numbers and it's not void
+isdigit(){
+    [ -z "$1" ] && return 1
+
+    # Check if the string contains any character that is NOT a digit
+    case "$1" in
+        *[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+#devuelve el nombre del usuario, los id's de las materias y sus nombres
+materias(){
+    if ! out=$(curl https://platdig.unlu.edu.ar/escritorio.cgi -H "Cookie: IdSession=$IdSession; SID=$SID"); then
+        return 1
+    fi
+    #echo "sid $SID IdSession $IdSession"
+    nombre=$(echo "$out" | grep "user_nombre_completo" | cut -d":" -f2 | tr "\"" " " | tr "," " ")
+    ids=$(echo "$out" | grep -oE "id\":[^,]*" | cut -d\" -f3 | tr '\n' ":")
+    nombre_materias=$(echo "$out" | grep -oE "nombre\":[^,]*" | cut -d\" -f3) #| tr '\n' ":")
+    if [ -z "$nombre" ] || [ -z "$ids" ] || [ -z "$nombre_materias" ]; then
+        return 2
+    fi
+}
+clases(){
+    if ! out=$(curl https://platdig.unlu.edu.ar/programas.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID"); then
+        return 1
+    fi
+    clases=$(echo "$out" | grep -oE "id_(archivo|texto)=[^>]*" | sed -E 's/id_(texto|archivo)=([0-9]+).*id_unidad=([0-9]+).*title="(.*)/\1=\2:unidad=\3:\4/')
+    if [ -z "$clases" ]; then
+        return 2
+    fi
+    
+}
+
+#example input: archivo=8851452:unidad=30952:Ej.11 - control de stock PRODUCCION.pdf"
+ver(){ # this function will download or print the class
+    id_archivo=$(echo "$1" | cut -d"=" -f2 | cut -d':' -f1)
+    id_unidad=$(echo "$1" | cut -d"=" -f3 | cut -d':' -f1)
+    nombre_archivo=$(echo "$1" | cut -d"=" -f3 | cut -d':' -f2 | tr '"' ' ' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT)  
+    if [ -z "$id_archivo" ] || [ -z "$id_unidad" ] || [ -z "$nombre_archivo" ]; then
+        return 1
+    fi
+    
+    if [ $(echo "$1" | cut -d'=' -f1) = "archivo" ]; then
+        if ! wget -v -O "$nombre_archivo" --header="Cookie: IdSession=$IdSession; SID=$SID" "https://platdig.unlu.edu.ar/prg_archivo.cgi?wAccion=descargar&id_archivo=$id_archivo&id_unidad=$id_unidad&id_curso=$2"; then
+            echo "Failed to download file"
+            read -p "press enter to go back to the menu"
+            return 2
+        fi
+
+        echo "File was downloaded, opening"
+        xdg-open  "./$nombre_archivo"
+        read -p "Press enter to go back to the menu: "
+
+    elif [ $(echo "$1" | cut -d'=' -f1) = "texto" ]; then
+        out=$(curl "https://platdig.unlu.edu.ar/prg_texto.cgi?wAccion=ver_texto&id_texto=$id_archivo&id_unidad=$id_unidad&id_curso=$2" -H "Cookie: IdSession=$IdSession; SID=$SID")
+        clear
+        #TO DO: add the response into a file for later debug
+        #The following line selects lines with opening or closing paragraphs, then substitues newlines with a random string, protects links including ">" "<" around them (IN THAT ORDER), deletes anything beetwen "<" and ">" (IN THAT ORDER), then replaces the random strings with newlines again, deletes any orphaned "<" and ">" y luego formatea el string con python
+        #TO DO: eliminate python
+        echo "$out" |  grep -E \<\(\/\|\)p | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; print(html.unescape(sys.stdin.read()))' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT
+        read -p "press enter to go back to the menu: "
+    fi
+
+}
+
+menu_materias(){
+    clear
+    echo "Bienvenido, $nombre"
+    echo "$nombre_materias" | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | nl
+    read -p "Seleccione una materia (e/exit para salir): "  opcion
+    if [ "$opcion" = "e" ] || [ "$opcion" = "exit" ] ; then
+        exit 255
+    elif ! isdigit "$opcion"; then
+        menu_materias
+        return #?
+    return 0
+    fi
+}
+
+menu_opciones(){
+    clear
+    opciones="inicio\nclases\nnoticias\narchivos\nCalificaciones\nPresentacion"
+    echo "$opciones" | nl
+    r
+    
+}
+
+menu_clases(){
+    clear && echo "$clases" | cut -d':' -f3 | tr '"' " " | iconv -f ISO-8859-1 -t ASCII//TRANSLIT| nl
+    read -p "Seleccione una clase (e/exit para salir, m/menu para seleccionar otra materia): "  opcion_clases
+    if [ "$opcion_clases" = "e" ] || [ "$opcion_clases" = "exit" ]; then
+        exit 255
+    elif [ "$opcion_clases" = "m" ] || [ "$opcion_clases" = "menu" ]; then
+        menu_materias
+        return $?
+    elif ! isdigit "$opcion_clases"; then
+        menu_clases
+        return $?
+    fi
+    ver "$(echo "$clases" | awk "NR==$opcion_clases")" "$id_curso"
+    menu_clases 
+    return #?
+}
+
+error=False
+
+if ! login; then
+    echo "Failed to log in"
+    exit 255
+fi
+if ! materias; then
+    echo "Error al descargar materias"
+    exit 255
+fi
+
+opcion=""
+menu_materias #sets $opcion
+while [ "$opcion" != "e" ] && [ "$opcion" != "exit" ]; do
+
+    if [ -n "$opcion" ]; then
+        id_curso="$(echo "$ids" | cut -d":" -f"$opcion")"
+        if ! clases "$id_curso"; then
+            echo "Error al descargar clases"
+            exit 255
+        fi
+        menu_clases
+fi
+    
+    
+    
+done
