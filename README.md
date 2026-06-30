@@ -30,7 +30,7 @@ Run the command from your terminal:
 educativa
 ```
 
-## To DO:
+## To do:
 -add support for "archivos", "inicio", "calificaciones" y "noticias"
 -remove python from the script
 -make code look better
