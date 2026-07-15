@@ -2,25 +2,6 @@
 export LANG=es_AR.iso88591
 alias curl="curl -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 --fail'"
 alias wget="wget --header='User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'"
-
-login(){
-read -p "enter your user: " user
-read -s -p "enter your password: " pass
-pass=$(echo -n "$pass" | md5sum - | cut -d " " -f1)
-#if there is an error
-if ! out=$(curl -v -i https://platdig.unlu.edu.ar/acceso.cgi -d "wAccion=login&wIdUsuario=$user&wClaveUsuario=$pass&permanecer_logueado=on" 2>/dev/null); then
-    echo "Failed to download log-in page"
-    return 1
-fi
-SID=$(echo "$out" | grep "SID" | cut -d= -f2 | cut -d";" -f1)
-IdSession=$(echo "$out" | grep "IdSession" | cut -d= -f2 | cut -d";" -f1)
-#echo "sid=$SID IdSession=$IdSession"
-if [ -z "$SID" ] || [ -z "$IdSession" ]; then
-    echo "Failed to parse cookies, was the password right?"
-    return 2
-fi
-}
-
 #returns 0 if the string contains only numbers and it's not void
 isdigit(){
     [ -z "$1" ] && return 1
@@ -31,6 +12,24 @@ isdigit(){
         *) return 0 ;;
     esac
 }
+
+login(){ #set SID and IdSession
+read -p "enter your user: " user
+read -s -p "enter your password: " pass
+pass=$(echo -n "$pass" | md5sum - | cut -d " " -f1)
+#if there is an error
+if ! out=$(curl -v -i https://platdig.unlu.edu.ar/acceso.cgi -d "wAccion=login&wIdUsuario=$user&wClaveUsuario=$pass&permanecer_logueado=on" 2>/dev/null); then
+    echo "Failed to download log-in page"
+    return 1
+fi
+SID=$(echo "$out" | grep "SID" | cut -d= -f2 | cut -d";" -f1)
+IdSession=$(echo "$out" | grep "IdSession" | cut -d= -f2 | cut -d";" -f1)
+if [ -z "$SID" ] || [ -z "$IdSession" ]; then
+    echo "Failed to parse cookies, was the password right?"
+    return 2
+fi
+}
+
 
 #devuelve el nombre del usuario, los id's de las materias y sus nombres
 materias(){
@@ -45,6 +44,7 @@ materias(){
         return 2
     fi
 }
+
 clases(){
     if ! out=$(curl https://platdig.unlu.edu.ar/programas.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID"); then
         return 1
@@ -53,7 +53,19 @@ clases(){
     if [ -z "$clases" ]; then
         return 2
     fi
-    
+}
+
+inicio(){
+    if ! out="$(curl https://platdig.unlu.edu.ar/index.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
+        return 1
+    fi
+    clear
+    echo "$out" |  grep -E '(<(/|)p|<img[^>]*>|<h[123456].|<div class="titulo)' | grep -Ev 'platdig.unlu.edu.ar/(archivos/logos|skins)' | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; print(html.unescape(sys.stdin.read()))' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$'
+}
+menu_inicio(){
+    read -p "press enter to go back to the menu: "
+    menu_materias
+    return $?
 }
 
 #example input: archivo=8851452:unidad=30952:Ej.11 - control de stock PRODUCCION.pdf"
@@ -82,7 +94,7 @@ ver(){ # this function will download or print the class
         #TO DO: add the response into a file for later debug
         #The following line selects lines with opening or closing paragraphs, then substitues newlines with a random string, protects links including ">" "<" around them (IN THAT ORDER), deletes anything beetwen "<" and ">" (IN THAT ORDER), then replaces the random strings with newlines again, deletes any orphaned "<" and ">" y luego formatea el string con python
         #TO DO: eliminate python
-        echo "$out" |  grep -E \<\(\/\|\)p | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; print(html.unescape(sys.stdin.read()))' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT
+    echo "$out" |  grep -E '(<(/|)p|<img[^>]*>|<h[123456].|<div class="titulo)' | grep -Ev 'platdig.unlu.edu.ar/(archivos/logos|skins)' | grep -v "class=\"[^>\"]*linea_unica" | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; print(html.unescape(sys.stdin.read()))' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$'
         read -p "press enter to go back to the menu: "
     fi
 
@@ -98,15 +110,32 @@ menu_materias(){
     elif ! isdigit "$opcion"; then
         menu_materias
         return #?
-    return 0
+    fi
+    id_curso="$(echo "$ids" | cut -d":" -f"$opcion")"
+    if ! menu_opciones "$id_curso"; then
+        echo "Error"
+        exit 255
     fi
 }
 
 menu_opciones(){
     clear
-    opciones="inicio\nclases\nnoticias\narchivos\nCalificaciones\nPresentacion"
+    echo "Bienvenido, $nombre"
+    opciones="inicio
+clases
+noticias
+archivos
+Calificaciones
+Presentacion"
     echo "$opciones" | nl
-    r
+    read -p "Selecciona una opcion: " menu
+    if ! isdigit "$menu"; then
+        menu_opciones
+        return $?
+    fi
+    tmp="menu_$(echo "$opciones" | awk "NR==$menu")"
+    $(echo "$opciones" | awk "NR==$menu") "$1"
+    "$tmp" "$1"
     
 }
 
@@ -140,17 +169,3 @@ fi
 
 opcion=""
 menu_materias #sets $opcion
-while [ "$opcion" != "e" ] && [ "$opcion" != "exit" ]; do
-
-    if [ -n "$opcion" ]; then
-        id_curso="$(echo "$ids" | cut -d":" -f"$opcion")"
-        if ! clases "$id_curso"; then
-            echo "Error al descargar clases"
-            exit 255
-        fi
-        menu_clases
-fi
-    
-    
-    
-done
