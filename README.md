@@ -32,6 +32,6 @@ educativa
 
 ## To do:
 
-- add support for "archivos", "inicio", "calificaciones" y "noticias"
+- add support for "archivos", "calificaciones" y "noticias"
 - remove python from the script
-- make code look better
+- Refactor code
