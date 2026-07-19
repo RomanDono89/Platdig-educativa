@@ -2,6 +2,11 @@
 CLI tool to access my university's web platform.
 
 ## Installation
+Install the following dependencies:
+
+``` bash
+curl, inconv (which comes pre-installed in arch), wget, python3, gnu-coreutils, etc.
+```
 
 Clone the repository:
 
@@ -32,6 +37,6 @@ educativa
 
 ## To do:
 
-- add support for "archivos", "calificaciones" y "noticias"
+- add support for "Presentacion"
 - remove python from the script
 - Refactor code
