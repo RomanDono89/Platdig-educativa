@@ -14,9 +14,22 @@ isdigit(){
 }
 
 login(){ #set SID and IdSession
-read -p "enter your user: " user
-read -s -p "enter your password: " pass
-pass=$(echo -n "$pass" | md5sum - | cut -d " " -f1)
+#enter user
+printf "enter your user: "
+read  user
+
+#enter password but without printing to the terminal
+printf "enter your password: "
+trap 'stty echo; printf "\n"; exit' INT TERM EXIT
+stty -echo
+read -r pass
+stty echo
+trap - INT TERM EXIT
+printf "\n"
+
+#hash password
+pass=$(printf "%s" "$pass" | md5sum - | cut -d " " -f1)
+
 #if there is an error
 if ! out=$(curl -v -i https://platdig.unlu.edu.ar/acceso.cgi -d "wAccion=login&wIdUsuario=$user&wClaveUsuario=$pass&permanecer_logueado=on" 2>/dev/null); then
     echo "Failed to download log-in page"
@@ -49,7 +62,8 @@ menu_materias(){
     clear
     echo "Bienvenido, $nombre"
     echo "$nombre_materias" | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | nl
-    read -p "Seleccione una materia (e/exit para salir): "  opcion
+    printf "Seleccione una materia (e/exit para salir): "
+    read -r opcion
     if [ "$opcion" = "e" ] || [ "$opcion" = "exit" ] ; then
         exit 255
     elif ! isdigit "$opcion"; then
@@ -63,7 +77,7 @@ menu_materias(){
     fi
 }
 clases(){
-    if ! out=$(curl https://platdig.unlu.edu.ar/programas.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID"); then
+    if ! out=$(curl 'https://platdig.unlu.edu.ar/programas.cgi?id_curso='"$1" -H "Cookie: IdSession=$IdSession; SID=$SID"); then
         return 1
     fi
     clases=$(echo "$out" | grep -oE "id_(archivo|texto)=[^>]*" | sed -E 's/id_(texto|archivo)=([0-9]+).*id_unidad=([0-9]+).*title="(.*)/\1=\2:unidad=\3:\4/')
@@ -73,7 +87,8 @@ clases(){
 }
 menu_clases(){
     clear && echo "$clases" | cut -d':' -f3 | tr '"' " " | iconv -f ISO-8859-1 -t ASCII//TRANSLIT| nl
-    read -p "Seleccione una clase (e/exit para salir, m/menu para seleccionar otra materia): "  opcion_clases
+    printf "Seleccione una clase (e/exit para salir, m/menu para seleccionar otra materia): "
+    read   -r opcion_clases
     if [ "$opcion_clases" = "e" ] || [ "$opcion_clases" = "exit" ]; then
         exit 255
     elif [ "$opcion_clases" = "m" ] || [ "$opcion_clases" = "menu" ]; then
@@ -89,7 +104,7 @@ menu_clases(){
 }
 
 inicio(){
-    if ! out="$(curl https://platdig.unlu.edu.ar/index.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
+    if ! out="$(curl 'https://platdig.unlu.edu.ar/index.cgi?id_curso='"$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
         return 1
     fi
     clear
@@ -97,33 +112,35 @@ inicio(){
 }
 
 menu_inicio(){
-    read -p "press enter to go back to the menu: "
+    printf "press enter to go back to the menu: "
+    read -r UNUSED
     menu_materias
     return $?
 }
 
 Calificaciones(){
-    if ! out="$(curl https://platdig.unlu.edu.ar/calificaciones.cgi?id_curso\="$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
+    if ! out="$(curl "https://platdig.unlu.edu.ar/calificaciones.cgi?id_curso=$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
         return 1
     fi
     echo "$out" > calificaciones.1.html
     nombre_calificaciones="$(echo "$out" | grep -E "<div class=\"nombre" | sed -E "s|<[^\>]*>||g" | python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$')"
-    IdCategoria=$(echo "$out" | grep -o wIdCategoria\=[^\"]* | cut -d'=' -f2)
+    IdCategoria=$(echo "$out" | grep -o "wIdCategoria=[^\"]*" | cut -d'=' -f2)
 }
 
 menu_Calificaciones(){
     clear
     echo "Bienvenido, $nombre"
     echo "$nombre_calificaciones" | nl
-    read -p "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra accion): "  opcion_Calificaciones
+    printf "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra accion): "
+    read -r opcion_Calificaciones
     if [ "$opcion_Calificaciones" = "e" ] || [ "$opcion_Calificaciones" = "exit" ]; then
         exit 255
     elif [ "$opcion_Calificaciones" = "m" ] || [ "$opcion_Calificaciones" = "menu" ]; then
-        menu_opciones $1
-        return $?
+        menu_opciones "$1"
+        return "$?"
     elif ! isdigit "$opcion_Calificaciones"; then
-        menu_Calificaciones $1
-        return $?
+        menu_Calificaciones "$1"
+        return "$?"
     fi
     clear
     IdCategoria=$(echo "$IdCategoria" |  awk "NR==$opcion_Calificaciones")
@@ -131,9 +148,10 @@ menu_Calificaciones(){
         return 1
     fi
     echo "$out" |  grep -E '<span class="calificacion_nota|<span class="nombre"|<div>|<strong>|<p>'| grep -Ev 'platdig.unlu.edu.ar/(archivos/logos|skins)' | grep -v "class=\"[^>\"]*linea_unica" | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$'
-    read -p "press enter to go back to the menu"
+    printf "press enter to go back to the menu"
+    read -r UNUSED
     
-    menu_opciones $1
+    menu_opciones "$1"
 
 }
 
@@ -146,25 +164,28 @@ ver(){ # this function will download or print the class
         return 1
     fi
     
-    if [ $(echo "$1" | cut -d'=' -f1) = "archivo" ]; then
+    if [ "$(echo "$1" | cut -d'=' -f1)" = "archivo" ]; then
         if ! wget -v -O "$nombre_archivo" --header="Cookie: IdSession=$IdSession; SID=$SID" "https://platdig.unlu.edu.ar/prg_archivo.cgi?wAccion=descargar&id_archivo=$id_archivo&id_unidad=$id_unidad&id_curso=$2"; then
             echo "Failed to download file"
-            read -p "press enter to go back to the menu"
+    printf "press enter to go back to the menu"
+            read -r UNUSED
             return 2
         fi
 
         echo "File was downloaded, opening"
         xdg-open  "./$nombre_archivo"
-        read -p "Press enter to go back to the menu: "
+    printf "press enter to go back to the menu"
+        read -r UNUSED
 
-    elif [ $(echo "$1" | cut -d'=' -f1) = "texto" ]; then
+    elif [ "$(echo "$1" | cut -d'=' -f1)" = "texto" ]; then
         out=$(curl "https://platdig.unlu.edu.ar/prg_texto.cgi?wAccion=ver_texto&id_texto=$id_archivo&id_unidad=$id_unidad&id_curso=$2" -H "Cookie: IdSession=$IdSession; SID=$SID")
         clear
         #TO DO: add the response into a file for later debug
         #The following line selects lines with opening or closing paragraphs, then substitues newlines with a random string, protects links including ">" "<" around them (IN THAT ORDER), deletes anything beetwen "<" and ">" (IN THAT ORDER), then replaces the random strings with newlines again, deletes any orphaned "<" and ">" y luego formatea el string con python
         #TO DO: eliminate python
     echo "$out" |  grep -E '(<(/|)p|<img[^>]*>|<h[123456].|<div class="titulo)' | grep -Ev 'platdig.unlu.edu.ar/(archivos/logos|skins)' | grep -v "class=\"[^>\"]*linea_unica" | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$'
-        read -p "press enter to go back to the menu: "
+    printf "press enter to go back to the menu: "
+        read -r UNUSED
     fi
 
 }
@@ -174,28 +195,30 @@ Noticias(){
         return 1
     fi
     nombres_noticias=$(echo "$out" | grep \<div\ class=\"titulo  | sed 's/^[[:space:]]*//' | sed -E 's|<[^>]*>||g' | python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT)
-    IdNew=$(echo $out | grep -oE wIdNew=[^\&]* | cut -d'=' -f2)
+    IdNew="$(echo "$out" | grep -oE "wIdNew=[^&]*" | cut -d'=' -f2)"
 
 }
 menu_Noticias(){
     clear
     echo "$nombres_noticias" | nl
-    read -p "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra materia): "  opcion_Noticias
+    printf "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra materia): "
+    read  -r  opcion_Noticias
     if [ "$opcion_Noticias" = "e" ] || [ "$opcion_Noticias" = "exit" ]; then
         exit 255
     elif [ "$opcion_Noticias" = "m" ] || [ "$opcion_Noticias" = "menu" ]; then
         menu_materias
         return $?
     elif ! isdigit "$opcion_Noticias"; then
-        menu_Noticias $1
-        return $?
+        menu_Noticias "$1"
+        return "$?"
     fi
     if ! out="$(curl  "https://platdig.unlu.edu.ar/news.cgi?wAccion=vernew&wIdNew=$(echo "$IdNew" |  awk "NR==$opcion_Noticias")&id_curso=$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
         return 1
     fi
     clear
     echo "$out" |  grep -E '(<(/|)p|<img[^>]*>|<h[123456].|<div class="titulo)' | grep -Ev 'platdig.unlu.edu.ar/(archivos/logos|skins)' | sed ':a;N;$!ba;s/\n/RandomString67kda/g' | sed -E 's|(https://[^" ]*)|> \1 <|g' | sed -E 's|<[^>]*>||g' | sed 's|RandomString67kda|\n|g' | tr '>' ' ' | tr '<' ' '|  python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | grep -v '^[[:space:]]*$'
-    read -p "press enter to go back to the menu"
+    printf "press enter to go back to the menu"
+    read -r UNUSED
     menu_opciones "$1"
 
 
@@ -204,20 +227,21 @@ Archivos(){
     if ! out="$(curl  "https://platdig.unlu.edu.ar/archivos.cgi?id_curso=$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
         return 1
     fi
-     nombres_archivos="$(echo "$out" | grep \<div\ class\=\"nombre | sed 's|<[^>]*>||g' | python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT)"
-    Id_archivos=$(echo "$out" | grep -o wIdGrupo\=[^\&]* | cut -d'=' -f2)
+     nombres_archivos="$(echo "$out" | grep "<div class=\"nombre" | sed 's|<[^>]*>||g' | python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT)"
+    Id_archivos="$(echo "$out" | grep -o "wIdGrupo=[^&]*" | cut -d'=' -f2)"
 }
 menu_Archivos(){
     clear
     echo "$nombres_archivos" | nl
-    read -p "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra opcion): "  opcion_archivos
+    printf "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra opcion): "
+    read -r  opcion_archivos
     if [ "$opcion_archivos" = "e" ] || [ "$opcion_archivos" = "exit" ]; then
         exit 255
     elif [ "$opcion_archivos" = "m" ] || [ "$opcion_archivos" = "menu" ]; then
-        menu_opciones $1
+        menu_opciones "$1"
         return $?
     elif ! isdigit "$opcion_archivos"; then
-        menu_Archivos $1
+        menu_Archivos "$1"
         return $?
     fi
     Id_archivos="$(echo "$Id_archivos" | awk "NR==$opcion_archivos")"
@@ -225,23 +249,24 @@ menu_Archivos(){
         echo "No Option was found"
         exit 255
     fi
-    menu_Archivos2 $1
+    menu_Archivos2 "$1"
 }
 menu_Archivos2(){
     if ! out="$(curl  "https://platdig.unlu.edu.ar/archivos.cgi?wAccion=vergrupo&wIdGrupo=$Id_archivos&id_curso=$1" -H "Cookie: IdSession=$IdSession; SID=$SID")"; then
         return 1
     fi
-     nombres_archivos2="$(echo "$out" | grep \<span\ class\=\"nombre\" | sed 's|<[^>]*>||g'|sed 's/^[[:space:]]*//' )"
+     nombres_archivos2="$(echo "$out" | grep "<span class=\"nombre\"" | sed 's|<[^>]*>||g'|sed 's/^[[:space:]]*//' )"
     clear
     echo "$nombres_archivos2" | python3 -c 'import html,sys; sys.stdout.reconfigure(errors="replace"); print(html.unescape(sys.stdin.read()), end="")' | iconv -f ISO-8859-1 -t ASCII//TRANSLIT | sed 's/^[[:space:]]*//' | nl
-    read -p "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra opcion): "  opcion_archivos2
+    printf "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra opcion): "
+    read -r  opcion_archivos2
     if [ "$opcion_archivos2" = "e" ] || [ "$opcion_archivos2" = "exit" ]; then
         exit 255
     elif [ "$opcion_archivos2" = "m" ] || [ "$opcion_archivos2" = "menu" ]; then
-        menu_opciones $1
+        menu_opciones "$1"
         return $?
     elif ! isdigit "$opcion_archivos2"; then
-        menu_Archivos2 $1
+        menu_Archivos2 "$1"
         return $?
     fi
     nombre_archivo=$(echo "$nombres_archivos2" | awk "NR==$opcion_archivos2")
@@ -253,8 +278,9 @@ menu_Archivos2(){
 
         echo "File was downloaded, opening"
         xdg-open  "./$nombre_archivo"
-        read -p "Press enter to go back to the menu: "
-        menu_opciones $1
+    printf "Press enter to go back to the menu: "
+        read -r UNUSED
+        menu_opciones "$1"
     
 
 
@@ -271,23 +297,21 @@ Archivos
 Calificaciones
 Presentacion"
     echo "$opciones" | nl
-    read -p "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra materia): "  opcion_Opciones
+    printf "Seleccione una opcion (e/exit para salir, m/menu para seleccionar otra materia): "
+    read  -r  opcion_Opciones
     if [ "$opcion_Opciones" = "e" ] || [ "$opcion_Opciones" = "exit" ]; then
         exit 255
     elif [ "$opcion_Opciones" = "m" ] || [ "$opcion_Opciones" = "menu" ]; then
         menu_materias
         return $?
     elif ! isdigit "$opcion_Opciones"; then
-        menu_opciones $1
+        menu_opciones "$1"
         return $?
     fi
     tmp="menu_$(echo "$opciones" | awk "NR==$opcion_Opciones")"
     $(echo "$opciones" | awk "NR==$opcion_Opciones") "$1"
     "$tmp" "$1"
 }
-
-
-error=False
 
 if ! login; then
     echo "Failed to log in"
